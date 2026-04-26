@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from database import SessionLocal, DailyBar
+from database import SessionLocal, DailyBar, init_db
 
 # Create the FastAPI app
 app = FastAPI(
@@ -15,6 +15,11 @@ app = FastAPI(
     description="A simple API for fetching stored stock price data.",
     version="0.1.0",
 )
+
+@app.on_event("startup")
+def on_startup():
+    """Initialize database tables on app startup."""
+    init_db()
 
 
 def get_db():

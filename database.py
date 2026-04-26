@@ -3,6 +3,7 @@ database.py
 Defines the database connection and tables.
 """
 
+import os
 from datetime import datetime
 from sqlalchemy import (
     create_engine,
@@ -17,7 +18,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # SQLite database file lives in the project folder
-DATABASE_URL = "sqlite:///stocks.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///stocks.db")
+
+# Railway/Heroku use "postgres://" but SQLAlchemy needs "postgresql://"
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # The "engine" is the connection to the database
 engine = create_engine(DATABASE_URL, echo=False)
