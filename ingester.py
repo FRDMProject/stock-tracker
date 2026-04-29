@@ -1,9 +1,14 @@
 """
 ingester.py
-Connects to Alpaca, fetches stock data, and saves it to the database.
+Fetches stock bars from Alpaca and stores them in the database.
+
+Two modes (controlled by the INGESTER_MODE environment variable):
+  - "daily" (default): Fetches yesterday's bar for all symbols. Fast. Used by cron.
+  - "backfill": Fetches 5 years of history. Slow. Run once manually.
 """
 
 import os
+import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from alpaca.trading.client import TradingClient
@@ -12,17 +17,34 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
 from database import SessionLocal, DailyBar, init_db
+from universe import get_active_symbols, fetch_and_store_universe
 
-# Load credentials from .env
 load_dotenv()
 API_KEY = os.getenv("ALPACA_API_KEY")
 SECRET_KEY = os.getenv("ALPACA_SECRET_KEY")
+MODE = os.getenv("INGESTER_MODE", "daily").lower()
 
 if not API_KEY or not SECRET_KEY:
     raise ValueError("Missing Alpaca credentials. Check your .env file.")
 
-# Stocks we want to track
-SYMBOLS = ["AAPL", "TSLA", "MSFT", "NVDA", "GOOGL"]
+# How many symbols to request from Alpaca in a single API call.
+# Alpaca supports many symbols per call; 200 is a safe sweet spot.
+SYMBOLS_PER_CALL = 200
+def get_sp500_symbols() -> list[str]:
+    """A small test list — just to verify the backfill code works.
+    
+    Tomorrow we'll do the real backfill on Railway against the full universe.
+    """
+    symbols = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+        "TSLA", "NVDA", "JPM", "V", "WMT",
+        "JNJ", "PG", "MA", "UNH", "HD",
+        "DIS", "BAC", "ADBE", "CRM", "NFLX",
+    ]
+    print(f"Using small test list ({len(symbols)} symbols)")
+    return symbols
+# How many database rows to insert before committing a batch.
+DB_BATCH_SIZE = 5000
 
 
 def check_account():
@@ -38,44 +60,28 @@ def check_account():
     print()
 
 
-def fetch_and_store_bars(data_client, symbols, days_back=30):
-    """Fetch daily bars and save them to the database."""
-    print("=" * 60)
-    print(f"FETCHING + STORING LAST {days_back} DAYS OF DAILY BARS")
-    print("=" * 60)
-
-    end = datetime.now() - timedelta(minutes=20)  # account for 15-min delay
-    start = end - timedelta(days=days_back)
-
+def fetch_bars_for_symbols(data_client, symbols, start, end):
+    """Fetch daily bars for a batch of symbols in one API call."""
     request = StockBarsRequest(
         symbol_or_symbols=symbols,
         timeframe=TimeFrame.Day,
         start=start,
         end=end,
     )
-    bars = data_client.get_stock_bars(request)
+    return data_client.get_stock_bars(request)
 
-    # Open a database session
-    session = SessionLocal()
+
+def store_bars(session, bars_response, symbols):
+    """Insert bars into the database, skipping duplicates. Returns (inserted, skipped)."""
     inserted = 0
     skipped = 0
+    pending = []
 
-    try:
-        for symbol in symbols:
-            symbol_bars = bars.data.get(symbol, [])
-            for bar in symbol_bars:
-                # Check if this row already exists (avoid duplicates)
-                existing = (
-                    session.query(DailyBar)
-                    .filter_by(symbol=symbol, timestamp=bar.timestamp)
-                    .first()
-                )
-                if existing:
-                    skipped += 1
-                    continue
-
-                # Create a new database row
-                row = DailyBar(
+    for symbol in symbols:
+        symbol_bars = bars_response.data.get(symbol, [])
+        for bar in symbol_bars:
+            pending.append(
+                DailyBar(
                     symbol=symbol,
                     timestamp=bar.timestamp,
                     open=bar.open,
@@ -84,66 +90,161 @@ def fetch_and_store_bars(data_client, symbols, days_back=30):
                     close=bar.close,
                     volume=bar.volume,
                 )
+            )
+
+    # Insert in chunks to keep memory low and transactions reasonable
+    for i in range(0, len(pending), DB_BATCH_SIZE):
+        chunk = pending[i : i + DB_BATCH_SIZE]
+        for row in chunk:
+            existing = (
+                session.query(DailyBar)
+                .filter_by(symbol=row.symbol, timestamp=row.timestamp)
+                .first()
+            )
+            if existing:
+                skipped += 1
+            else:
                 session.add(row)
                 inserted += 1
-
-        # Commit all the new rows at once
         session.commit()
-        print(f"✅ Inserted: {inserted}  |  Skipped (already exists): {skipped}")
-    except Exception as e:
-        session.rollback()
-        print(f"❌ Error saving to database: {e}")
-        raise
-    finally:
-        session.close()
+    return inserted, skipped
 
 
-def show_database_summary():
-    """Print a summary of what's currently in the database."""
-    print()
+def run_backfill(years_back: int = 5, test_mode: bool = False):    
+    """Backfill mode: fetch many years of daily history for all symbols."""
     print("=" * 60)
-    print("DATABASE SUMMARY")
+    print(f"BACKFILL MODE: {years_back} years of daily history")
     print("=" * 60)
+
+    if test_mode:
+        symbols = get_sp500_symbols()
+        print(f"\nTEST MODE: Backfilling S&P 500 ({len(symbols)} symbols)...\n")
+    else:
+        # Make sure the universe is up to date
+        fetch_and_store_universe(only_us_equities=True)
+        symbols = get_active_symbols()
+        print(f"\nBackfilling {len(symbols):,} symbols...\n")
+
+    data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+    end = datetime.now() - timedelta(minutes=20)
+    start = end - timedelta(days=years_back * 365)
+
+    total_inserted = 0
+    total_skipped = 0
+    failed_batches = 0
+    start_time = time.time()
 
     session = SessionLocal()
     try:
-        total = session.query(DailyBar).count()
-        print(f"Total rows in database: {total}")
-        print()
-
-        for symbol in SYMBOLS:
-            count = session.query(DailyBar).filter_by(symbol=symbol).count()
-            latest = (
-                session.query(DailyBar)
-                .filter_by(symbol=symbol)
-                .order_by(DailyBar.timestamp.desc())
-                .first()
+        for i in range(0, len(symbols), SYMBOLS_PER_CALL):
+            batch = symbols[i : i + SYMBOLS_PER_CALL]
+            batch_num = i // SYMBOLS_PER_CALL + 1
+            total_batches = (len(symbols) + SYMBOLS_PER_CALL - 1) // SYMBOLS_PER_CALL
+            elapsed = time.time() - start_time
+            print(
+                f"[Batch {batch_num}/{total_batches}] "
+                f"Symbols {i + 1}-{min(i + SYMBOLS_PER_CALL, len(symbols))}  "
+                f"(elapsed: {elapsed:.0f}s)"
             )
-            if latest:
-                print(
-                    f"{symbol:6} | {count:3} bars | "
-                    f"latest: {latest.timestamp.date()} close=${latest.close:.2f}"
-                )
-            else:
-                print(f"{symbol:6} |   0 bars | (no data)")
+
+            try:
+                response = fetch_bars_for_symbols(data_client, batch, start, end)
+                ins, skp = store_bars(session, response, batch)
+                total_inserted += ins
+                total_skipped += skp
+                print(f"  Inserted: {ins:,}  Skipped: {skp:,}")
+            except Exception as e:
+                print(f"  ❌ Batch failed: {e}")
+                failed_batches += 1
+                session.rollback()
+                # Sleep briefly and continue
+                time.sleep(2)
+                continue
+
+            # Gentle rate-limit cushion (Alpaca allows 200 req/min)
+            time.sleep(0.5)
+    finally:
+        session.close()
+
+    elapsed = time.time() - start_time
+    print()
+    print("=" * 60)
+    print(f"BACKFILL COMPLETE in {elapsed / 60:.1f} minutes")
+    print(f"Total inserted: {total_inserted:,}")
+    print(f"Total skipped:  {total_skipped:,}")
+    print(f"Failed batches: {failed_batches}")
+    print("=" * 60)
+
+
+def run_daily():
+    """Daily mode: fetch only the last few days for all symbols (incremental)."""
+    print("=" * 60)
+    print("DAILY MODE: incremental update")
+    print("=" * 60)
+
+    symbols = get_active_symbols()
+    if not symbols:
+        print("⚠️  No symbols in universe yet. Run backfill first.")
+        return
+
+    print(f"Updating {len(symbols):,} symbols...\n")
+
+    data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
+    end = datetime.now() - timedelta(minutes=20)
+    start = end - timedelta(days=7)  # last 7 days catches any missed days
+
+    total_inserted = 0
+    total_skipped = 0
+    start_time = time.time()
+
+    session = SessionLocal()
+    try:
+        for i in range(0, len(symbols), SYMBOLS_PER_CALL):
+            batch = symbols[i : i + SYMBOLS_PER_CALL]
+            try:
+                response = fetch_bars_for_symbols(data_client, batch, start, end)
+                ins, skp = store_bars(session, response, batch)
+                total_inserted += ins
+                total_skipped += skp
+            except Exception as e:
+                print(f"  ❌ Batch starting at {i} failed: {e}")
+                session.rollback()
+                continue
+            time.sleep(0.5)
+    finally:
+        session.close()
+
+    elapsed = time.time() - start_time
+    print(f"\n✅ Daily update complete in {elapsed:.1f}s")
+    print(f"Inserted: {total_inserted:,}  Skipped: {total_skipped:,}")
+
+
+def show_database_summary():
+    """Print a quick summary of what's currently in the database."""
+    session = SessionLocal()
+    try:
+        total_bars = session.query(DailyBar).count()
+        total_symbols = (
+            session.query(DailyBar.symbol).distinct().count()
+        )
+        print(f"\nDatabase contains {total_bars:,} bars across {total_symbols:,} symbols.")
     finally:
         session.close()
 
 
 def main():
-    # Make sure the database/tables exist
     init_db()
-    print()
-
     check_account()
 
-    data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
-    fetch_and_store_bars(data_client, SYMBOLS, days_back=30)
+    if MODE == "backfill":
+        run_backfill(years_back=5)
+    elif MODE == "backfill_test":
+        run_backfill(years_back=5, test_mode=True)
+    else:
+        run_daily()
 
     show_database_summary()
-
-    print()
-    print("✅ Done.")
+    print("\n✅ Done.")
 
 
 if __name__ == "__main__":

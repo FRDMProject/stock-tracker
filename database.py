@@ -13,6 +13,7 @@ from sqlalchemy import (
     Float,
     DateTime,
     BigInteger,
+    Boolean,
     UniqueConstraint,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -33,7 +34,21 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 # Base class for our table definitions
 Base = declarative_base()
 
+class Asset(Base):
+    """One row = one tradeable security (e.g., AAPL, MSFT)."""
 
+    __tablename__ = "assets"
+
+    symbol = Column(String, primary_key=True)
+    name = Column(String, nullable=True)
+    exchange = Column(String, nullable=True)
+    asset_class = Column(String, nullable=True)
+    tradable = Column(Boolean, default=True)
+    status = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Asset {self.symbol} ({self.exchange})>"
 class DailyBar(Base):
     """One row = one day of price data for one stock."""
 
