@@ -3,8 +3,10 @@ ingester.py
 Fetches stock bars from Alpaca and stores them in the database.
 
 Two modes (controlled by the INGESTER_MODE environment variable):
-  - "daily" (default): Fetches yesterday's bar for all symbols. Fast. Used by cron.
-  - "backfill": Fetches 5 years of history. Slow. Run once manually.
+  - "daily" (default): Fetches the last week of bars for the watchlist. Fast. Used by cron.
+  - "backfill": Fetches 2 years of history for the watchlist. Run once manually.
+
+The watchlist is S&P 500 + Nasdaq 100 (~550 symbols), defined in watchlist.py.
 """
 
 import os
@@ -17,7 +19,7 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 
 from database import SessionLocal, DailyBar, init_db
-from universe import get_active_symbols, fetch_and_store_universe
+from watchlist import get_watchlist_symbols
 
 load_dotenv()
 API_KEY = os.getenv("ALPACA_API_KEY")
@@ -30,19 +32,7 @@ if not API_KEY or not SECRET_KEY:
 # How many symbols to request from Alpaca in a single API call.
 # Alpaca supports many symbols per call; 200 is a safe sweet spot.
 SYMBOLS_PER_CALL = 200
-def get_sp500_symbols() -> list[str]:
-    """A small test list — just to verify the backfill code works.
-    
-    Tomorrow we'll do the real backfill on Railway against the full universe.
-    """
-    symbols = [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "META",
-        "TSLA", "NVDA", "JPM", "V", "WMT",
-        "JNJ", "PG", "MA", "UNH", "HD",
-        "DIS", "BAC", "ADBE", "CRM", "NFLX",
-    ]
-    print(f"Using small test list ({len(symbols)} symbols)")
-    return symbols
+
 # How many database rows to insert before committing a batch.
 DB_BATCH_SIZE = 5000
 
@@ -110,20 +100,14 @@ def store_bars(session, bars_response, symbols):
     return inserted, skipped
 
 
-def run_backfill(years_back: int = 5, test_mode: bool = False):    
-    """Backfill mode: fetch many years of daily history for all symbols."""
+def run_backfill(years_back: int = 2):
+    """Backfill mode: fetch many years of daily history for the watchlist."""
     print("=" * 60)
     print(f"BACKFILL MODE: {years_back} years of daily history")
     print("=" * 60)
 
-    if test_mode:
-        symbols = get_sp500_symbols()
-        print(f"\nTEST MODE: Backfilling S&P 500 ({len(symbols)} symbols)...\n")
-    else:
-        # Make sure the universe is up to date
-        fetch_and_store_universe(only_us_equities=True)
-        symbols = get_active_symbols()
-        print(f"\nBackfilling {len(symbols):,} symbols...\n")
+    symbols = get_watchlist_symbols()
+    print(f"\nBackfilling {len(symbols):,} watchlist symbols...\n")
 
     data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
     end = datetime.now() - timedelta(minutes=20)
@@ -177,17 +161,13 @@ def run_backfill(years_back: int = 5, test_mode: bool = False):
 
 
 def run_daily():
-    """Daily mode: fetch only the last few days for all symbols (incremental)."""
+    """Daily mode: fetch the last week of bars for the watchlist (incremental)."""
     print("=" * 60)
     print("DAILY MODE: incremental update")
     print("=" * 60)
 
-    symbols = get_active_symbols()
-    if not symbols:
-        print("⚠️  No symbols in universe yet. Run backfill first.")
-        return
-
-    print(f"Updating {len(symbols):,} symbols...\n")
+    symbols = get_watchlist_symbols()
+    print(f"Updating {len(symbols):,} watchlist symbols...\n")
 
     data_client = StockHistoricalDataClient(API_KEY, SECRET_KEY)
     end = datetime.now() - timedelta(minutes=20)
@@ -237,9 +217,7 @@ def main():
     check_account()
 
     if MODE == "backfill":
-        run_backfill(years_back=5)
-    elif MODE == "backfill_test":
-        run_backfill(years_back=5, test_mode=True)
+        run_backfill(years_back=2)
     else:
         run_daily()
 
