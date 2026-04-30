@@ -49,6 +49,21 @@ class Asset(Base):
 
     def __repr__(self):
         return f"<Asset {self.symbol} ({self.exchange})>"
+class Holding(Base):
+    """One row = one stock the user holds in their portfolio."""
+
+    __tablename__ = "holdings"
+
+    symbol = Column(String, primary_key=True)
+    shares = Column(Float, nullable=False)
+    cost_basis = Column(Float, nullable=False)  # total dollars invested
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<Holding {self.symbol} shares={self.shares} basis=${self.cost_basis}>"
+
+
 class DailyBar(Base):
     """One row = one day of price data for one stock."""
 

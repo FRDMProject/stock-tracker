@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock Tracker</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="preconnect" href="https://unpkg.com" />
+</head>
+<body>
+  <header class="site-header">
+    <a href="#/" class="brand">
+      <span class="brand-mark">&#9650;</span>
+      <span class="brand-name">Stock Tracker</span>
+    </a>
+    <div class="search">
+      <input
+        id="search-input"
+        type="text"
+        placeholder="Search by ticker or company name..."
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <ul id="search-results" class="search-results" hidden></ul>
+    </div>
+  </header>
+
+  <main id="view"></main>
+
+  <template id="tpl-home">
+    <section class="home">
+      <header class="detail-header">
+        <div class="detail-title">
+          <h1 class="company-name">S&amp;P 500</h1>
+          <div class="ticker-row">
+            <a href="#/SPY" class="ticker">SPY</a>
+            <span class="exchange muted">SPDR S&amp;P 500 ETF Trust</span>
+          </div>
+        </div>
+        <div class="price-block">
+          <div class="price">&mdash;</div>
+          <div class="price-change muted"></div>
+        </div>
+      </header>
+
+      <div class="timeframe-bar" role="tablist">
+        <button data-range="1M">1M</button>
+        <button data-range="3M">3M</button>
+        <button data-range="6M">6M</button>
+        <button data-range="1Y" class="active">1Y</button>
+        <button data-range="5Y">5Y</button>
+      </div>
+
+      <div id="chart" class="chart"></div>
+
+      <section class="account-panel">
+        <div class="account-header">
+          <h2>Account</h2>
+          <span class="account-status muted">Alpaca paper</span>
+        </div>
+        <div class="account-grid">
+          <div class="account-card primary">
+            <span class="label">Buying Power</span>
+            <span class="value account-buying-power">—</span>
+          </div>
+          <div class="account-card">
+            <span class="label">Cash</span>
+            <span class="value account-cash">—</span>
+          </div>
+          <div class="account-card">
+            <span class="label">Portfolio Value</span>
+            <span class="value account-portfolio">—</span>
+          </div>
+          <div class="account-card">
+            <span class="label">Status</span>
+            <span class="value account-status-value">—</span>
+          </div>
+        </div>
+        <p class="account-error muted" hidden></p>
+      </section>
+
+      <section class="portfolio-panel">
+        <div class="portfolio-header">
+          <h2>My Portfolio</h2>
+          <span class="portfolio-summary muted"></span>
+        </div>
+        <ul class="portfolio-list" role="list"></ul>
+        <p class="portfolio-empty muted" hidden>No holdings yet.</p>
+      </section>
+    </section>
+  </template>
+
+  <template id="tpl-detail">
+    <section class="detail">
+      <header class="detail-header">
+        <div class="detail-title">
+          <h1 class="company-name">&nbsp;</h1>
+          <div class="ticker-row">
+            <span class="ticker"></span>
+            <span class="exchange muted"></span>
+          </div>
+        </div>
+        <div class="price-block">
+          <div class="price">&mdash;</div>
+          <div class="price-change muted"></div>
+        </div>
+      </header>
+
+      <div class="timeframe-bar" role="tablist">
+        <button data-range="1M">1M</button>
+        <button data-range="3M">3M</button>
+        <button data-range="6M">6M</button>
+        <button data-range="1Y" class="active">1Y</button>
+        <button data-range="5Y">5Y</button>
+      </div>
+
+      <div id="chart" class="chart"></div>
+
+      <div class="info-grid">
+        <div><span class="label">Symbol</span><span class="value info-symbol"></span></div>
+        <div><span class="label">Exchange</span><span class="value info-exchange"></span></div>
+        <div><span class="label">Asset Class</span><span class="value info-class"></span></div>
+        <div><span class="label">Status</span><span class="value info-status"></span></div>
+        <div><span class="label">Tradable</span><span class="value info-tradable"></span></div>
+        <div><span class="label">Latest Volume</span><span class="value info-volume"></span></div>
+      </div>
+    </section>
+  </template>
+
+  <template id="tpl-error">
+    <section class="error-state">
+      <h2>Something went wrong</h2>
+      <p class="error-message"></p>
+      <a href="#/" class="btn-link">&larr; Back to home</a>
+    </section>
+  </template>
+
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
