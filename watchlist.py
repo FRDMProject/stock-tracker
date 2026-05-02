@@ -1,9 +1,11 @@
 """
 watchlist.py
-Defines the scoped set of symbols we track bars for: S&P 500 + Nasdaq 100.
+Defines the scoped set of symbols we track bars for:
+  - S&P 500 + Nasdaq 100 (constituents, fetched from Wikipedia)
+  - Major index ETFs (SPY, QQQ, DIA, IWM) — used as benchmarks and as the
+    frontend's default landing chart
 
 Sourced live from Wikipedia at first call, then cached in-process.
-Roughly 550 unique symbols after dedupe.
 """
 
 from io import StringIO
@@ -12,6 +14,10 @@ import requests
 
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 NDX_URL = "https://en.wikipedia.org/wiki/Nasdaq-100"
+
+# Major index ETFs — always include even though they aren't in either index.
+# SPY = S&P 500, QQQ = Nasdaq 100, DIA = Dow Jones, IWM = Russell 2000.
+EXTRA_TICKERS = ["SPY", "QQQ", "DIA", "IWM"]
 
 # Wikipedia 403s the default urllib User-Agent that pd.read_html uses.
 USER_AGENT = "stock-tracker/0.1 (educational project)"
@@ -47,14 +53,15 @@ def _normalize(sym: str) -> str:
 
 
 def get_watchlist_symbols(force_refresh: bool = False) -> list[str]:
-    """Return the deduped, sorted list of S&P 500 + Nasdaq 100 tickers."""
+    """Return the deduped, sorted list of watchlist tickers."""
     global _cache
     if _cache is not None and not force_refresh:
         return _cache
 
     sp500 = {_normalize(s) for s in _fetch_sp500()}
     ndx = {_normalize(s) for s in _fetch_nasdaq100()}
-    combined = sorted(sp500 | ndx)
+    extras = {_normalize(s) for s in EXTRA_TICKERS}
+    combined = sorted(sp500 | ndx | extras)
     _cache = combined
     return combined
 
